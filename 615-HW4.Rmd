@@ -1,0 +1,155 @@
+---
+title: "615-HW4"
+author: "Gary Wang"
+date: "2024-09-25"
+output: pdf_document
+---
+
+```{r}
+library(data.table)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+```
+
+b
+```{r}
+buoy_data <- fread("buoy_data.csv")
+
+# convert placeholder values (99, 999, and 9999) to NA for relevant columns
+
+# Define a function to replace them with NA
+replace_na <- function(x) {
+  x[x %in% c(99, 999, 9999)] <- NA
+  return(x)
+}
+
+# apply the function to the relevant columns
+cols_to_replace <- c("WDIR", "WSPD", "GST", "WVHT", "DPD", "APD", "ATMP", 
+                     "WTMP", "DEWP", "VIS", "PRES")
+
+buoy_data[, (cols_to_replace) := lapply(.SD, replace_na), .SDcols = cols_to_replace]
+
+head(buoy_data)
+summary(buoy_data)
+
+# Converting missing/null data to NA is not always a good idea. Because the placeholder values, such as 999, can carry specific information like sensor malfunctions and so on, which is crucial for the better understanding of the dataset.
+# The NA values appear to be distributed in a structured way as they clustered around certain variables and dates, which suggests data recording issues or planned outages rather than isolated, random gaps.
+```
+
+c
+```{r}
+# Read in the cleaned dataset
+buoy_data <- fread("cleaned_buoy_data.csv")
+
+# filter out rows with NA for key variables
+climate_data <- buoy_data %>% 
+  filter(!is.na(ATMP) & !is.na(WTMP) & !is.na(PRES))
+
+# aggregate yearly averages for key variables
+annual_data <- climate_data %>%
+  group_by(Year) %>%
+  summarize(mean_ATMP = mean(ATMP, na.rm = TRUE),
+            mean_WTMP = mean(WTMP, na.rm = TRUE),
+            mean_PRES = mean(PRES, na.rm = TRUE))
+
+# visualize the trends in air temperature, water temperature, and pressure over time
+
+# ATMP
+ggplot(annual_data, aes(x = Year, y = mean_ATMP)) +
+  geom_line(color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "ATMP Over Time",
+       x = "Year", y = "Air Temperature")
+
+# WTMP
+ggplot(annual_data, aes(x = Year, y = mean_WTMP)) +
+  geom_line(color = "green") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "WTMP Over Time",
+       x = "Year", y = "Water Temperature")
+
+# PRES
+ggplot(annual_data, aes(x = Year, y = mean_PRES)) +
+  geom_line(color = "purple") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "PRES Over Time",
+       x = "Year", y = "Pressure")
+
+# calculate the correlation between air and water temperatures
+correlation <- cor(annual_data$mean_ATMP, annual_data$mean_WTMP, use = "complete.obs")
+print(correlation)
+
+# moving average to smooth the data
+annual_data <- annual_data %>%
+  mutate(ATMP_MA = zoo::rollmean(mean_ATMP, k = 5, fill = NA),
+         WTMP_MA = zoo::rollmean(mean_WTMP, k = 5, fill = NA),
+         PRES_MA = zoo::rollmean(mean_PRES, k = 5, fill = NA))
+
+# plot the moving averages
+ggplot(annual_data, aes(x = Year)) +
+  geom_line(aes(y = ATMP_MA), color = "blue") +
+  geom_line(aes(y = WTMP_MA), color = "green") +
+  geom_line(aes(y = PRES_MA), color = "purple") +
+  labs(title = "Moving Average of ATMP, WTMP, and PRES Over Time",
+       x = "Year", y = "Values (°C / hPa)")
+
+# linear regression model for temperature trends
+lm_ATMP <- lm(mean_ATMP ~ Year, data = annual_data)
+summary(lm_ATMP)
+
+lm_WTMP <- lm(mean_WTMP ~ Year, data = annual_data)
+summary(lm_WTMP)
+
+# check for significant trends
+summary(lm_ATMP)
+summary(lm_WTMP)
+```
+
+d
+```{r}
+rainfall_data <- fread("Rainfall.csv")
+head(rainfall_data)
+summary(rainfall_data)
+
+# check for missing values
+colSums(is.na(rainfall_data))
+
+# convert date to date-time format
+rainfall_data$Date <- as.POSIXct(rainfall_data$DATE, format = "%Y%m%d %H:%M", tz = "UTC")
+
+# calculate summary statistics for rainfall
+rainfall_stats <- rainfall_data %>%
+  summarise(
+    mean_rainfall = mean(HPCP, na.rm = TRUE),
+    median_rainfall = median(HPCP, na.rm = TRUE),
+    max_rainfall = max(HPCP, na.rm = TRUE),
+    min_rainfall = min(HPCP, na.rm = TRUE)
+  )
+
+print(rainfall_stats)
+
+# plot rainfall distribution
+ggplot(rainfall_data, aes(x = HPCP)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Rainfall in Boston (1985-2013)", 
+       x = "rainfall", y = "frequency")
+
+# plot time series of rainfall
+ggplot(rainfall_data, aes(x = Date, y = HPCP)) +
+  geom_line(color = "blue") +
+  labs(title = "Rainfall Over Time in Boston (1985-2013)",
+       x = "Year", y = "rainfall")
+
+# merge datasets by date
+rainfall_buoy <- merge(rainfall_data, buoy_data, by.x = "Date", by.y = "Year")
+
+# explore relationships between rainfall (HPCP) and buoy readings
+ggplot(rainfall_buoy, aes(x = WTMP, y = HPCP)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Water Temperature vs Rainfall",
+         x = "water temperature", y = "rainfall")
+
+# In my analysis of Boston's rainfall data from 1985 to 2013, I found that rainfall is heavily skewed toward minimal amounts, with most days seeing little to no rain and only a few experiencing significant rainfall. The time series plot I created shows occasional spikes in rainfall but no clear trend over the years. I chose to compare rainfall with buoy water temperature, but the weak correlation and linear model suggest that water temperature alone isn't a strong predictor of rainfall. This process helped me appreciate the complexities weather forecasters face in predicting such irregular patterns.
+```
